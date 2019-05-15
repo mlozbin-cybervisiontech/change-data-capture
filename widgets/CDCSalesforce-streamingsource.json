@@ -8,16 +8,6 @@
       "properties": [
         {
           "widget-type": "textbox",
-          "label": "Client Id",
-          "name": "clientId"
-        },
-        {
-          "widget-type": "password",
-          "label": "Client Secret",
-          "name": "clientSecret"
-        },
-        {
-          "widget-type": "textbox",
           "label": "Username",
           "name": "username"
         },
@@ -28,9 +18,19 @@
         },
         {
           "widget-type": "textbox",
+          "label": "Consumer Key",
+          "name": "consumerKey"
+        },
+        {
+          "widget-type": "password",
+          "label": "Consumer Secret",
+          "name": "consumerSecret"
+        },
+        {
+          "widget-type": "textbox",
           "label": "Login Url",
           "name": "loginUrl",
-          "widget-attributes" : {
+          "widget-attributes": {
             "default": "https://login.salesforce.com/services/oauth2/token"
           }
         }
@@ -45,18 +45,6 @@
           "name": "objects",
           "widget-attributes": {
             "delimiter": ","
-          }
-        },
-        {
-          "widget-type": "select",
-          "label": "Error Handling",
-          "name": "errorHandling",
-          "widget-attributes": {
-            "values": [
-              "Skip on error",
-              "Stop on error"
-            ],
-            "default": "Skip on error"
           }
         }
       ]

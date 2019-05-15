@@ -26,7 +26,6 @@ import com.sforce.soap.partner.sobject.SObject;
 import com.sforce.ws.ConnectionException;
 import io.cdap.cdap.api.data.format.StructuredRecord;
 import io.cdap.cdap.api.data.schema.Schema;
-import io.cdap.plugin.cdc.common.ErrorHandling;
 import io.cdap.plugin.cdc.common.OperationType;
 import io.cdap.plugin.cdc.source.salesforce.authenticator.AuthenticatorCredentials;
 import io.cdap.plugin.cdc.source.salesforce.records.ChangeEventHeader;
@@ -45,6 +44,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.Timer;
+import java.util.TimerTask;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
@@ -62,28 +63,35 @@ public class SalesforceReceiver extends Receiver<StructuredRecord> {
   private static final String RECEIVER_THREAD_NAME = "salesforce_streaming_api_listener";
   // every x seconds thread wakes up and checks if stream is not yet stopped
   private static final long GET_MESSAGE_TIMEOUT_SECONDS = 2;
+  private static final long RECONNECTION_DELAY = 100;
+  private static final long RECONNECTION_LOG_INTERVAL = 1000;
   private static final Gson GSON = new Gson();
 
   private final AuthenticatorCredentials credentials;
   private final List<String> objectsForTracking;
-  private final ErrorHandling errorHandling;
   private final Map<String, Schema> schemas = new HashMap<>();
   private final Map<String, List<ChangeEventHeader>> events = new HashMap<>();
   private SalesforceEventTopicListener eventTopicListener;
+  private PartnerConnection connection;
   private static final JsonParser JSON_PARSER = new JsonParser();
 
-  SalesforceReceiver(AuthenticatorCredentials credentials, List<String> objectsForTracking,
-                     ErrorHandling errorHandling) {
+  SalesforceReceiver(AuthenticatorCredentials credentials, List<String> objectsForTracking) {
     super(StorageLevel.MEMORY_AND_DISK_2());
     this.credentials = credentials;
     this.objectsForTracking = new ArrayList<>(objectsForTracking);
-    this.errorHandling = errorHandling;
   }
 
   @Override
   public void onStart() {
     eventTopicListener = new SalesforceEventTopicListener(credentials, objectsForTracking);
-    eventTopicListener.start();
+    try {
+      eventTopicListener.start();
+    } catch (Exception e) {
+      eventTopicListener.stop();
+      throw new IllegalStateException("Could not start client", e);
+    }
+
+    setupConnection();
 
     ThreadFactory namedThreadFactory = new ThreadFactoryBuilder()
       .setNameFormat(RECEIVER_THREAD_NAME + "-%d")
@@ -98,18 +106,37 @@ public class SalesforceReceiver extends Receiver<StructuredRecord> {
     // is designed to stop by itself if isStopped() returns false
   }
 
-  private void receive() {
-    PartnerConnection connection;
-    try {
-      connection = SalesforceConnectionUtil.getPartnerConnection(credentials);
-    } catch (ConnectionException e) {
-      throw new RuntimeException("Failed to connect to Salesforce", e);
-    }
+  private void setupConnection() {
+    TimerTask logTask = new TimerTask() {
+      public void run() {
+        LOG.warn("Failed to connect to Salesforce, reconnecting...");
+      }
+    };
+
+    Timer timer = new Timer("ReconnectionLogTimer");
+    timer.scheduleAtFixedRate(logTask, RECONNECTION_LOG_INTERVAL, RECONNECTION_LOG_INTERVAL);
 
     while (!isStopped()) {
       try {
-        String message = eventTopicListener.getMessage(GET_MESSAGE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        connection = SalesforceConnectionUtil.getPartnerConnection(credentials);
+        break;
+      } catch (ConnectionException e) {
+        try {
+          Thread.sleep(RECONNECTION_DELAY);
+        } catch (InterruptedException ex) {
+          break;
+        }
+      }
+    }
 
+    timer.cancel();
+    timer.purge();
+  }
+
+  private void receive() {
+    while (!isStopped()) {
+      try {
+        String message = eventTopicListener.getMessage(GET_MESSAGE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         if (message != null) {
           // whole message class is not needed because we are interested only in change event payload
           JsonObject headerElement = JSON_PARSER.parse(message)
@@ -130,32 +157,31 @@ public class SalesforceReceiver extends Receiver<StructuredRecord> {
           }
         }
       } catch (Exception e) {
-        switch (errorHandling) {
-          case SKIP:
-            LOG.warn("Failed to process message, skipping it.", e);
-            break;
-          case STOP:
-            throw new RuntimeException("Failed to process message", e);
-          default:
-            throw new IllegalStateException(String.format("Unknown error handling strategy '%s'", errorHandling));
-        }
+        throw new IllegalStateException("Unexpected error", e);
       }
     }
     eventTopicListener.stop();
   }
 
-  private void processEvents(List<ChangeEventHeader> events, PartnerConnection connection) throws ConnectionException {
+  private void processEvents(List<ChangeEventHeader> events, PartnerConnection connection) {
     for (ChangeEventHeader event : events) {
-      SObjectDescriptor descriptor = SObjectDescriptor.fromName(event.getEntityName(), connection);
-      SObjectsDescribeResult describeResult = new SObjectsDescribeResult(connection, descriptor.getAllParentObjects());
+      while (!isStopped()) {
+        try {
+          SObjectDescriptor descriptor = SObjectDescriptor.fromName(event.getEntityName(), connection);
+          SObjectsDescribeResult describeResult =
+            new SObjectsDescribeResult(connection, descriptor.getAllParentObjects());
+          Schema schema = SalesforceRecord.getSchema(descriptor, describeResult);
+          updateSchemaIfNecessary(event.getEntityName(), schema);
 
-      Schema schema = SalesforceRecord.getSchema(descriptor, describeResult);
-      updateSchemaIfNecessary(event.getEntityName(), schema);
-
-      if (getOperationType(event) != OperationType.DELETE) {
-        sendUpdateRecords(event, descriptor, schema, connection);
-      } else {
-        sendDeleteRecords(Arrays.asList(event.getRecordIds()), event.getEntityName(), schema);
+          if (getOperationType(event) == OperationType.DELETE) {
+            sendDeleteRecords(Arrays.asList(event.getRecordIds()), event.getEntityName(), schema);
+          } else {
+            sendUpdateRecords(event, descriptor, schema, connection);
+          }
+          break;
+        } catch (ConnectionException e) {
+          setupConnection();
+        }
       }
     }
   }

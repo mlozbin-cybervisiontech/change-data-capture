@@ -18,6 +18,7 @@ package io.cdap.plugin.cdc.source.salesforce.sobject;
 
 import com.sforce.soap.partner.Field;
 import com.sforce.soap.partner.PartnerConnection;
+import com.sforce.ws.ConnectionException;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -42,7 +43,8 @@ public class SObjectDescriptor {
    * @param partnerConnection Salesforce connection
    * @return sObject descriptor
    */
-  public static SObjectDescriptor fromName(String name, PartnerConnection partnerConnection) {
+  public static SObjectDescriptor fromName(String name, PartnerConnection partnerConnection)
+    throws ConnectionException {
     SObjectsDescribeResult describeResult = new SObjectsDescribeResult(
       partnerConnection, Collections.singletonList(name));
     List<FieldDescriptor> fields = describeResult.getFields().stream()

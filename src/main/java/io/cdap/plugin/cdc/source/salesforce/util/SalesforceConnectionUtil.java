@@ -45,15 +45,16 @@ public class SalesforceConnectionUtil {
   /**
    * Creates {@link AuthenticatorCredentials} instance based on given parameters.
    *
-   * @param username     Salesforce username
-   * @param password     Salesforce password
-   * @param clientId     Salesforce client id
-   * @param clientSecret Salesforce client secret
-   * @param loginUrl     Salesforce authentication url
+   * @param username       Salesforce username
+   * @param password       Salesforce password
+   * @param consumerKey    Salesforce consumer key
+   * @param consumerSecret Salesforce consumer secret
+   * @param loginUrl       Salesforce authentication url
    * @return authenticator credentials
    */
-  public static AuthenticatorCredentials getAuthenticatorCredentials(String username, String password, String clientId,
-                                                                     String clientSecret, String loginUrl) {
-    return new AuthenticatorCredentials(username, password, clientId, clientSecret, loginUrl);
+  public static AuthenticatorCredentials getAuthenticatorCredentials(String username, String password,
+                                                                     String consumerKey, String consumerSecret,
+                                                                     String loginUrl) {
+    return new AuthenticatorCredentials(username, password, consumerKey, consumerSecret, loginUrl);
   }
 }

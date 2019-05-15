@@ -32,12 +32,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 import static java.lang.String.format;
 
@@ -65,39 +67,33 @@ public class SalesforceEventTopicListener {
   private final BlockingQueue<String> messagesQueue = new LinkedBlockingQueue<>();
 
   private final AuthenticatorCredentials credentials;
-  private final List<String> objectsForTracking;
+  private final List<String> topics;
   private BayeuxClient bayeuxClient;
 
   public SalesforceEventTopicListener(AuthenticatorCredentials credentials, List<String> objectsForTracking) {
     this.credentials = credentials;
-    this.objectsForTracking = new ArrayList<>(objectsForTracking);
+
+    if (objectsForTracking.isEmpty()) {
+      this.topics = Collections.singletonList(BASE_EVENT_TOPIC);
+    } else {
+      this.topics = new ArrayList<>(objectsForTracking).stream().map(this::getObjectTopic).collect(Collectors.toList());
+    }
   }
 
   /**
    * Start the Bayeux Client which listens to the Salesforce EventTopic and saves received messages
    * to the queue.
    */
-  public void start() {
-    try {
-      bayeuxClient = getClient(credentials);
-      waitForHandshake(bayeuxClient);
-      LOG.debug("Client handshake done");
+  public void start() throws Exception {
+    bayeuxClient = getClient(credentials);
+    waitForHandshake(bayeuxClient);
+    LOG.debug("Client handshake done");
 
-      ClientSessionChannel.MessageListener messageListener = (channel, message) -> messagesQueue.add(message.getJSON());
-      if (objectsForTracking.isEmpty()) {
-        LOG.debug("Subscribe on '{}'", BASE_EVENT_TOPIC);
-        bayeuxClient.getChannel(BASE_EVENT_TOPIC)
-          .subscribe(messageListener);
-      } else {
-        for (String objectName : objectsForTracking) {
-          String topic = getObjectTopic(objectName);
-          LOG.debug("Subscribe on '{}'", topic);
-          bayeuxClient.getChannel(topic)
-            .subscribe(messageListener);
-        }
-      }
-    } catch (Exception e) {
-      throw new RuntimeException("Could not start client", e);
+    ClientSessionChannel.MessageListener messageListener = (channel, message) -> messagesQueue.add(message.getJSON());
+    for (String topic : topics) {
+      LOG.debug("Subscribe on '{}'", topic);
+      bayeuxClient.getChannel(topic)
+        .subscribe(messageListener);
     }
   }
 
@@ -125,6 +121,9 @@ public class SalesforceEventTopicListener {
   }
 
   private String getObjectTopic(String objectName) {
+    // Custom object name ends with '__c'.
+    // For base object 'Task' topic will be '/data/TaskChangeEvent'
+    // For custom object with name 'Employee__c' should be '/data/Employee__ChangeEvent'
     String name = objectName.endsWith("__c") ? objectName.substring(0, objectName.length() - 1) : objectName;
     return format(EVENT_TOPIC_PATTERN, name);
   }

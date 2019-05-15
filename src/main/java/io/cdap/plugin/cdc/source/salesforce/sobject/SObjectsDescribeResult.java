@@ -45,19 +45,14 @@ public class SObjectsDescribeResult {
   // key -> [sObject name], value -> [key -> field name,  value -> field]
   private final Map<String, Map<String, Field>> objectToFieldMap = new HashMap<>();
 
-  public SObjectsDescribeResult(PartnerConnection connection, Collection<String> sObjects) {
+  public SObjectsDescribeResult(PartnerConnection connection, Collection<String> sObjects) throws ConnectionException {
 
     // split the given sObjects into smaller partitions to ensure we don't exceed the limitation
-    Lists.partition(new ArrayList<>(sObjects), DESCRIBE_SOBJECTS_LIMIT).stream()
-      .map(partition -> {
-        try {
-          return connection.describeSObjects(partition.toArray(new String[0]));
-        } catch (ConnectionException e) {
-          throw new RuntimeException(e);
-        }
-      })
-      .flatMap(Arrays::stream)
-      .forEach(this::addSObjectDescribe);
+    for (List<String> partition : Lists.partition(new ArrayList<>(sObjects), DESCRIBE_SOBJECTS_LIMIT)) {
+      for (DescribeSObjectResult sObjectDescribe : connection.describeSObjects(partition.toArray(new String[0]))) {
+        addSObjectDescribe(sObjectDescribe);
+      }
+    }
   }
 
   /**

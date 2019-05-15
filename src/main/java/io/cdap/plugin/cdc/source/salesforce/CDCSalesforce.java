@@ -47,12 +47,11 @@ public class CDCSalesforce extends StreamingSource<StructuredRecord> {
 
   @Override
   public void configurePipeline(PipelineConfigurer pipelineConfigurer) {
-    LOG.info("Creating connection with url '{}', username '{}', clientId '{}'",
-             config.getLoginUrl(), config.getUsername(), config.getClientId());
+    LOG.info("Creating connection with url '{}', username '{}', consumer key '{}'",
+             config.getLoginUrl(), config.getUsername(), config.getConsumerKey());
     config.validate();
 
-    pipelineConfigurer.createDataset(config.referenceName, Constants.EXTERNAL_DATASET_TYPE,
-                                     DatasetProperties.EMPTY);
+    pipelineConfigurer.createDataset(config.referenceName, Constants.EXTERNAL_DATASET_TYPE, DatasetProperties.EMPTY);
     pipelineConfigurer.getStageConfigurer().setOutputSchema(Schemas.CHANGE_SCHEMA);
   }
 
@@ -61,7 +60,7 @@ public class CDCSalesforce extends StreamingSource<StructuredRecord> {
     config.validate();
 
     SalesforceReceiver salesforceReceiver
-      = new SalesforceReceiver(config.getAuthenticatorCredentials(), config.getObjects(), config.getErrorHandling());
+      = new SalesforceReceiver(config.getAuthenticatorCredentials(), config.getObjects());
     return context.getSparkStreamingContext()
       .receiverStream(salesforceReceiver)
       .map(Schemas::toCDCRecord);

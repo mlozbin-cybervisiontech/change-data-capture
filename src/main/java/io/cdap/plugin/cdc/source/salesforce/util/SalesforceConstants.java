@@ -23,11 +23,10 @@ public class SalesforceConstants {
 
   public static final String API_VERSION = "45.0";
 
-  public static final String PROPERTY_CLIENT_ID = "clientId";
-  public static final String PROPERTY_CLIENT_SECRET = "clientSecret";
+  public static final String PROPERTY_CONSUMER_KEY = "consumerKey";
+  public static final String PROPERTY_CONSUMER_SECRET = "consumerSecret";
   public static final String PROPERTY_USERNAME = "username";
   public static final String PROPERTY_PASSWORD = "password";
   public static final String PROPERTY_LOGIN_URL = "loginUrl";
   public static final String PROPERTY_OBJECTS = "objects";
-  public static final String PROPERTY_ERROR_HANDLING = "errorHandling";
 }

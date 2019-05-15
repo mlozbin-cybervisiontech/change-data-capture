@@ -21,10 +21,8 @@ import io.cdap.cdap.api.annotation.Description;
 import io.cdap.cdap.api.annotation.Macro;
 import io.cdap.cdap.api.annotation.Name;
 import io.cdap.cdap.api.plugin.PluginConfig;
-import io.cdap.cdap.etl.api.validation.InvalidConfigPropertyException;
 import io.cdap.cdap.etl.api.validation.InvalidStageException;
 import io.cdap.plugin.cdc.common.CDCReferencePluginConfig;
-import io.cdap.plugin.cdc.common.ErrorHandling;
 import io.cdap.plugin.cdc.source.salesforce.authenticator.AuthenticatorCredentials;
 import io.cdap.plugin.cdc.source.salesforce.util.SalesforceConnectionUtil;
 import io.cdap.plugin.cdc.source.salesforce.util.SalesforceConstants;
@@ -40,15 +38,15 @@ import javax.annotation.Nullable;
 public class SalesforceConfig extends CDCReferencePluginConfig {
   private static final String OBJECTS_SEPARATOR = ",";
 
-  @Name(SalesforceConstants.PROPERTY_CLIENT_ID)
-  @Description("Salesforce connected app's client ID")
+  @Name(SalesforceConstants.PROPERTY_CONSUMER_KEY)
+  @Description("Salesforce connected app's consumer key")
   @Macro
-  private String clientId;
+  private String consumerKey;
 
-  @Name(SalesforceConstants.PROPERTY_CLIENT_SECRET)
-  @Description("Salesforce connected app's client secret key")
+  @Name(SalesforceConstants.PROPERTY_CONSUMER_SECRET)
+  @Description("Salesforce connected app's consumer secret key")
   @Macro
-  private String clientSecret;
+  private String consumerSecret;
 
   @Name(SalesforceConstants.PROPERTY_USERNAME)
   @Description("Salesforce username")
@@ -71,31 +69,27 @@ public class SalesforceConfig extends CDCReferencePluginConfig {
   @Nullable
   private String objects;
 
-  @Name(SalesforceConstants.PROPERTY_ERROR_HANDLING)
-  @Description("Strategy used to handle erroneous records. Acceptable values are Skip on error, Stop on error.\n" +
-    "Skip on error - ignores erroneous record.\n" +
-    "Stop on error - fails pipeline due to erroneous record.")
-  @Macro
-  private String errorHandling;
-
   public SalesforceConfig() {
     super("");
   }
 
-  public SalesforceConfig(String referenceName, String clientId, String clientSecret,
-                          String username, String password, String loginUrl, String objects, String errorHandling) {
+  public SalesforceConfig(String referenceName, String consumerKey, String consumerSecret,
+                          String username, String password, String loginUrl, String objects) {
     super(referenceName);
-    this.clientId = clientId;
-    this.clientSecret = clientSecret;
+    this.consumerKey = consumerKey;
+    this.consumerSecret = consumerSecret;
     this.username = username;
     this.password = password;
     this.loginUrl = loginUrl;
     this.objects = objects;
-    this.errorHandling = errorHandling;
   }
 
-  public String getClientId() {
-    return clientId;
+  public String getConsumerKey() {
+    return consumerKey;
+  }
+
+  public String getConsumerSecret() {
+    return consumerSecret;
   }
 
   public String getUsername() {
@@ -117,25 +111,10 @@ public class SalesforceConfig extends CDCReferencePluginConfig {
     return Arrays.asList(objects.split(OBJECTS_SEPARATOR));
   }
 
-  public ErrorHandling getErrorHandling() {
-    return ErrorHandling.fromValue(errorHandling)
-      .orElseThrow(() -> new InvalidConfigPropertyException("Unsupported error handling value: " + errorHandling,
-                                                            SalesforceConstants.PROPERTY_ERROR_HANDLING));
-  }
-
   @Override
   public void validate() {
-    validateConnection();
-    validateErrorHandling();
-  }
-
-  public AuthenticatorCredentials getAuthenticatorCredentials() {
-    return SalesforceConnectionUtil.getAuthenticatorCredentials(username, password, clientId, clientSecret, loginUrl);
-  }
-
-  private void validateConnection() {
-    if (containsMacro(SalesforceConstants.PROPERTY_CLIENT_ID)
-      || containsMacro(SalesforceConstants.PROPERTY_CLIENT_SECRET)
+    if (containsMacro(SalesforceConstants.PROPERTY_CONSUMER_KEY)
+      || containsMacro(SalesforceConstants.PROPERTY_CONSUMER_SECRET)
       || containsMacro(SalesforceConstants.PROPERTY_USERNAME)
       || containsMacro(SalesforceConstants.PROPERTY_PASSWORD)
       || containsMacro(SalesforceConstants.PROPERTY_LOGIN_URL)) {
@@ -149,11 +128,8 @@ public class SalesforceConfig extends CDCReferencePluginConfig {
     }
   }
 
-  private void validateErrorHandling() {
-    if (containsMacro(SalesforceConstants.PROPERTY_ERROR_HANDLING)) {
-      return;
-    }
-
-    getErrorHandling();
+  public AuthenticatorCredentials getAuthenticatorCredentials() {
+    return SalesforceConnectionUtil.getAuthenticatorCredentials(username, password, consumerKey, consumerSecret,
+                                                                loginUrl);
   }
 }
