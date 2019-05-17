@@ -31,7 +31,6 @@ import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -74,9 +73,11 @@ public class SalesforceEventTopicListener {
     this.credentials = credentials;
 
     if (objectsForTracking.isEmpty()) {
-      this.topics = Collections.singletonList(BASE_EVENT_TOPIC);
+      topics = Collections.singletonList(BASE_EVENT_TOPIC);
     } else {
-      this.topics = new ArrayList<>(objectsForTracking).stream().map(this::getObjectTopic).collect(Collectors.toList());
+      topics = objectsForTracking.stream()
+        .map(this::getObjectTopic)
+        .collect(Collectors.toList());
     }
   }
 
@@ -130,7 +131,7 @@ public class SalesforceEventTopicListener {
 
   private BayeuxClient getClient(AuthenticatorCredentials credentials) throws Exception {
     AuthResponse authResponse = Authenticator.oauthLogin(credentials);
-    String acessToken = authResponse.getAccessToken();
+    String accessToken = authResponse.getAccessToken();
     String instanceUrl = authResponse.getInstanceUrl();
 
     SslContextFactory sslContextFactory = new SslContextFactory();
@@ -146,7 +147,7 @@ public class SalesforceEventTopicListener {
       @Override
       protected void customize(Request exchange) {
         super.customize(exchange);
-        exchange.header("Authorization", "OAuth " + acessToken);
+        exchange.header("Authorization", "OAuth " + accessToken);
       }
     };
 

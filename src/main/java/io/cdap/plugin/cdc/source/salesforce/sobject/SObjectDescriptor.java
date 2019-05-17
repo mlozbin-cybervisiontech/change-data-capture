@@ -42,11 +42,13 @@ public class SObjectDescriptor {
    * @param name              sObject name
    * @param partnerConnection Salesforce connection
    * @return sObject descriptor
+   * @throws ConnectionException if connect to Salesforce failed.
    */
   public static SObjectDescriptor fromName(String name, PartnerConnection partnerConnection)
     throws ConnectionException {
-    SObjectsDescribeResult describeResult = new SObjectsDescribeResult(
-      partnerConnection, Collections.singletonList(name));
+    SObjectsDescribeResult describeResult = SObjectsDescribeResult
+      .fromSObjects(Collections.singletonList(name), partnerConnection);
+
     List<FieldDescriptor> fields = describeResult.getFields().stream()
       .map(Field::getName)
       .map(FieldDescriptor::new)

@@ -20,7 +20,8 @@ import java.util.Arrays;
 
 /**
  * Contains information about change event. Should be used instead of {@link com.sforce.soap.partner.ChangeEventHeader}
- * because GSON does not support setters.
+ * because GSON does not support setters and requires constructor without arguments; not similar fields naming in json.
+ * Setters are added to have possibility to set fields.
  */
 public class ChangeEventHeader {
   private String[] recordIds;

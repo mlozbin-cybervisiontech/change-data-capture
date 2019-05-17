@@ -43,16 +43,36 @@ public class SObjectsDescribeResult {
   private static final int DESCRIBE_SOBJECTS_LIMIT = 100;
 
   // key -> [sObject name], value -> [key -> field name,  value -> field]
-  private final Map<String, Map<String, Field>> objectToFieldMap = new HashMap<>();
+  private final Map<String, Map<String, Field>> objectToFieldMap;
 
-  public SObjectsDescribeResult(PartnerConnection connection, Collection<String> sObjects) throws ConnectionException {
+  /**
+   * Connects to Salesforce, gets describe result for the given sObject names and stores
+   * information about its fields into {@link SObjectsDescribeResult} class.
+   *
+   * @param sObjects   list of sObjects names
+   * @param connection Salesforce connection
+   * @return sObject describe result
+   * @throws ConnectionException if connect to Salesforce failed.
+   */
+  public static SObjectsDescribeResult fromSObjects(Collection<String> sObjects, PartnerConnection connection)
+    throws ConnectionException {
+    Map<String, Map<String, Field>> objectFieldMap = new HashMap<>();
 
     // split the given sObjects into smaller partitions to ensure we don't exceed the limitation
     for (List<String> partition : Lists.partition(new ArrayList<>(sObjects), DESCRIBE_SOBJECTS_LIMIT)) {
       for (DescribeSObjectResult sObjectDescribe : connection.describeSObjects(partition.toArray(new String[0]))) {
-        addSObjectDescribe(sObjectDescribe);
+        // sObjects names are case-insensitive
+        // store them in lower case to ensure we obtain them case-insensitively
+        objectFieldMap.put(sObjectDescribe.getName().toLowerCase(), getSObjectFields(sObjectDescribe));
       }
     }
+
+    return new SObjectsDescribeResult(objectFieldMap);
+  }
+
+
+  public SObjectsDescribeResult(Map<String, Map<String, Field>> objectToFieldMap) {
+    this.objectToFieldMap = new HashMap<>(objectToFieldMap);
   }
 
   /**
@@ -79,16 +99,12 @@ public class SObjectsDescribeResult {
     return fields == null ? null : fields.get(fieldName.toLowerCase());
   }
 
-  private void addSObjectDescribe(DescribeSObjectResult sObjectDescribe) {
-    Map<String, Field> fields = Arrays.stream(sObjectDescribe.getFields())
+  private static Map<String, Field> getSObjectFields(DescribeSObjectResult sObjectDescribe) {
+    return Arrays.stream(sObjectDescribe.getFields())
       .collect(Collectors.toMap(
         field -> field.getName().toLowerCase(),
         Function.identity(),
         (o, n) -> n,
         LinkedHashMap::new)); // preserve field order for queries by sObject
-
-    // sObjects names are case-insensitive
-    // store them in lower case to ensure we obtain them case-insensitively
-    objectToFieldMap.put(sObjectDescribe.getName().toLowerCase(), fields);
   }
 }

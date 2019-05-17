@@ -44,8 +44,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.Timer;
-import java.util.TimerTask;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
@@ -63,8 +61,7 @@ public class SalesforceReceiver extends Receiver<StructuredRecord> {
   private static final String RECEIVER_THREAD_NAME = "salesforce_streaming_api_listener";
   // every x seconds thread wakes up and checks if stream is not yet stopped
   private static final long GET_MESSAGE_TIMEOUT_SECONDS = 2;
-  private static final long RECONNECTION_DELAY = 100;
-  private static final long RECONNECTION_LOG_INTERVAL = 1000;
+  private static final long RECONNECTION_DELAY = 1000;
   private static final Gson GSON = new Gson();
 
   private final AuthenticatorCredentials credentials;
@@ -87,8 +84,7 @@ public class SalesforceReceiver extends Receiver<StructuredRecord> {
     try {
       eventTopicListener.start();
     } catch (Exception e) {
-      eventTopicListener.stop();
-      throw new IllegalStateException("Could not start client", e);
+      stop("Could not start client", e);
     }
 
     setupConnection();
@@ -107,30 +103,19 @@ public class SalesforceReceiver extends Receiver<StructuredRecord> {
   }
 
   private void setupConnection() {
-    TimerTask logTask = new TimerTask() {
-      public void run() {
-        LOG.warn("Failed to connect to Salesforce, reconnecting...");
-      }
-    };
-
-    Timer timer = new Timer("ReconnectionLogTimer");
-    timer.scheduleAtFixedRate(logTask, RECONNECTION_LOG_INTERVAL, RECONNECTION_LOG_INTERVAL);
-
     while (!isStopped()) {
       try {
         connection = SalesforceConnectionUtil.getPartnerConnection(credentials);
         break;
       } catch (ConnectionException e) {
         try {
+          LOG.warn("Failed connect to Salesforce, reconnecting...");
           Thread.sleep(RECONNECTION_DELAY);
         } catch (InterruptedException ex) {
           break;
         }
       }
     }
-
-    timer.cancel();
-    timer.purge();
   }
 
   private void receive() {
@@ -150,40 +135,44 @@ public class SalesforceReceiver extends Receiver<StructuredRecord> {
           eventsList.add(event);
 
           if (event.isTransactionEnd()) {
-            processEvents(eventsList, connection);
+            processEvents(eventsList);
             events.remove(event.getTransactionKey());
           } else {
             events.put(event.getTransactionKey(), eventsList);
           }
         }
       } catch (Exception e) {
-        throw new IllegalStateException("Unexpected error", e);
+        stop("Unexpected error", e);
       }
     }
     eventTopicListener.stop();
   }
 
-  private void processEvents(List<ChangeEventHeader> events, PartnerConnection connection) {
+  private void processEvents(List<ChangeEventHeader> events) {
     for (ChangeEventHeader event : events) {
+      SObjectDescriptor descriptor = null;
+      SObjectsDescribeResult describeResult = null;
+
       while (!isStopped()) {
         try {
-          SObjectDescriptor descriptor = SObjectDescriptor.fromName(event.getEntityName(), connection);
-          SObjectsDescribeResult describeResult =
-            new SObjectsDescribeResult(connection, descriptor.getAllParentObjects());
-          Schema schema = SalesforceRecord.getSchema(descriptor, describeResult);
-          updateSchemaIfNecessary(event.getEntityName(), schema);
-
-          if (getOperationType(event) == OperationType.DELETE) {
-            sendDeleteRecords(Arrays.asList(event.getRecordIds()), event.getEntityName(), schema);
-          } else {
-            sendUpdateRecords(event, descriptor, schema, connection);
-          }
+          descriptor = SObjectDescriptor.fromName(event.getEntityName(), connection);
+          describeResult = SObjectsDescribeResult.fromSObjects(descriptor.getAllParentObjects(), connection);
           break;
         } catch (ConnectionException e) {
           setupConnection();
         }
       }
+
+      Schema schema = SalesforceRecord.getSchema(descriptor, describeResult);
+      updateSchemaIfNecessary(event.getEntityName(), schema);
+
+      if (getOperationType(event) == OperationType.DELETE) {
+        sendDeleteRecords(Arrays.asList(event.getRecordIds()), event.getEntityName(), schema);
+      } else if (descriptor != null) {
+        sendUpdateRecords(event, descriptor, schema, connection);
+      }
     }
+
   }
 
   private void updateSchemaIfNecessary(String entityName, Schema schema) {
@@ -199,9 +188,18 @@ public class SalesforceReceiver extends Receiver<StructuredRecord> {
   }
 
   private void sendUpdateRecords(ChangeEventHeader event, SObjectDescriptor descriptor, Schema schema,
-                                 PartnerConnection connection) throws ConnectionException {
+                                 PartnerConnection connection) {
     String query = getQuery(event, descriptor.getFieldsNames());
-    QueryResult queryResult = connection.query(query);
+    QueryResult queryResult = null;
+
+    while (!isStopped()) {
+      try {
+        queryResult = connection.query(query);
+        break;
+      } catch (ConnectionException e) {
+        setupConnection();
+      }
+    }
 
     if (queryResult != null) {
       if (queryResult.getRecords().length < event.getRecordIds().length && !isWildcardEvent(event)) {
