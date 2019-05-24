@@ -16,46 +16,18 @@
 
 package io.cdap.plugin.cdc.source.salesforce.sobject;
 
-import com.sforce.soap.partner.Field;
-import com.sforce.soap.partner.PartnerConnection;
-import com.sforce.ws.ConnectionException;
-
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
  * Contains information about SObject, including its name and list of fields.
- * Can be obtained from SObject name.
  */
 public class SObjectDescriptor {
 
   private final String name;
   private final List<FieldDescriptor> fields;
-
-  /**
-   * Connects to Salesforce, gets describe result for the given sObject name and stores
-   * information about its fields into {@link SObjectDescriptor} class.
-   *
-   * @param name              sObject name
-   * @param partnerConnection Salesforce connection
-   * @return sObject descriptor
-   * @throws ConnectionException if connect to Salesforce failed.
-   */
-  public static SObjectDescriptor fromName(String name, PartnerConnection partnerConnection)
-    throws ConnectionException {
-    SObjectsDescribeResult describeResult = SObjectsDescribeResult
-      .fromSObjects(Collections.singletonList(name), partnerConnection);
-
-    List<FieldDescriptor> fields = describeResult.getFields().stream()
-      .map(Field::getName)
-      .map(FieldDescriptor::new)
-      .collect(Collectors.toList());
-
-    return new SObjectDescriptor(name, fields);
-  }
 
   public SObjectDescriptor(String name, List<FieldDescriptor> fields) {
     this.name = name;

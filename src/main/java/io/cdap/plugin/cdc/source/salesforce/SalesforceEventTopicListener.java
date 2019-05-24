@@ -43,8 +43,9 @@ import java.util.stream.Collectors;
 import static java.lang.String.format;
 
 /**
- * Listens to a specific Salesforce eventTopics and adds messages to the blocking queue,
- * which can be read by a user of the class.
+ * Listens to specific Salesforce event topics or general event topic and adds received messages with events such as
+ * CREATE, DELETE, UNDELETE, UPDATE, GAP_CREATE, GAP_DELETE, GAP_UNDELETE, GAP_UPDATE, GAP_OVERFLOW to the blocking
+ * queue, which can be read by a user of the class.
  */
 public class SalesforceEventTopicListener {
   private static final Logger LOG = LoggerFactory.getLogger(SalesforceEventTopicListener.class);

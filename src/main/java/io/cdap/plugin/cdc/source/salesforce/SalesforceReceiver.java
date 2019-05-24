@@ -16,10 +16,13 @@
 
 package io.cdap.plugin.cdc.source.salesforce;
 
+import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.sforce.soap.partner.DescribeSObjectResult;
+import com.sforce.soap.partner.Field;
 import com.sforce.soap.partner.PartnerConnection;
 import com.sforce.soap.partner.QueryResult;
 import com.sforce.soap.partner.sobject.SObject;
@@ -40,19 +43,24 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
  * Implementation of Spark receiver to receive Salesforce change events from EventTopic using Bayeux Client.
  * Subscribes to all events if objectsForTracking is empty, otherwise subscribes to all topics in list.
+ * Processes CREATE, DELETE, UNDELETE, UPDATE, GAP_CREATE, GAP_DELETE, GAP_UNDELETE, GAP_UPDATE, GAP_OVERFLOW events.
  * Produces DML structured records depending on change event type. Also produces DDL record if change event entity type
  * is processed for the first time.
  */
@@ -63,6 +71,8 @@ public class SalesforceReceiver extends Receiver<StructuredRecord> {
   private static final long GET_MESSAGE_TIMEOUT_SECONDS = 2;
   private static final long RECONNECTION_DELAY = 1000;
   private static final Gson GSON = new Gson();
+  // Salesforce limitation that we can describe only 100 sObjects at a time
+  private static final int DESCRIBE_SOBJECTS_LIMIT = 100;
 
   private final AuthenticatorCredentials credentials;
   private final List<String> objectsForTracking;
@@ -85,6 +95,7 @@ public class SalesforceReceiver extends Receiver<StructuredRecord> {
       eventTopicListener.start();
     } catch (Exception e) {
       stop("Could not start client", e);
+      return;
     }
 
     setupConnection();
@@ -112,6 +123,7 @@ public class SalesforceReceiver extends Receiver<StructuredRecord> {
           LOG.warn("Failed connect to Salesforce, reconnecting...");
           Thread.sleep(RECONNECTION_DELAY);
         } catch (InterruptedException ex) {
+          stop("Stopping because of interrupt");
           break;
         }
       }
@@ -150,26 +162,16 @@ public class SalesforceReceiver extends Receiver<StructuredRecord> {
 
   private void processEvents(List<ChangeEventHeader> events) {
     for (ChangeEventHeader event : events) {
-      SObjectDescriptor descriptor = null;
-      SObjectsDescribeResult describeResult = null;
-
-      while (!isStopped()) {
-        try {
-          descriptor = SObjectDescriptor.fromName(event.getEntityName(), connection);
-          describeResult = SObjectsDescribeResult.fromSObjects(descriptor.getAllParentObjects(), connection);
-          break;
-        } catch (ConnectionException e) {
-          setupConnection();
-        }
-      }
+      SObjectDescriptor descriptor = getSObjectDescriptorFromName(event.getEntityName());
+      SObjectsDescribeResult describeResult = getSObjectsDescribeResultFromSObjects(descriptor.getAllParentObjects());
 
       Schema schema = SalesforceRecord.getSchema(descriptor, describeResult);
       updateSchemaIfNecessary(event.getEntityName(), schema);
 
       if (getOperationType(event) == OperationType.DELETE) {
         sendDeleteRecords(Arrays.asList(event.getRecordIds()), event.getEntityName(), schema);
-      } else if (descriptor != null) {
-        sendUpdateRecords(event, descriptor, schema, connection);
+      } else {
+        sendUpdateRecords(event, descriptor, schema);
       }
     }
 
@@ -187,19 +189,9 @@ public class SalesforceReceiver extends Receiver<StructuredRecord> {
     }
   }
 
-  private void sendUpdateRecords(ChangeEventHeader event, SObjectDescriptor descriptor, Schema schema,
-                                 PartnerConnection connection) {
+  private void sendUpdateRecords(ChangeEventHeader event, SObjectDescriptor descriptor, Schema schema) {
     String query = getQuery(event, descriptor.getFieldsNames());
-    QueryResult queryResult = null;
-
-    while (!isStopped()) {
-      try {
-        queryResult = connection.query(query);
-        break;
-      } catch (ConnectionException e) {
-        setupConnection();
-      }
-    }
+    QueryResult queryResult = runSalesforceCommand(partnerConnection -> partnerConnection.query(query));
 
     if (queryResult != null) {
       if (queryResult.getRecords().length < event.getRecordIds().length && !isWildcardEvent(event)) {
@@ -270,5 +262,60 @@ public class SalesforceReceiver extends Receiver<StructuredRecord> {
         return OperationType.DELETE;
     }
     throw new IllegalArgumentException(String.format("Unknown change operation '%s'", event.getChangeType()));
+  }
+
+  private SObjectDescriptor getSObjectDescriptorFromName(String name) {
+    SObjectsDescribeResult describeResult = getSObjectsDescribeResultFromSObjects(Collections.singletonList(name));
+
+    List<SObjectDescriptor.FieldDescriptor> fields = describeResult.getFields().stream()
+      .map(Field::getName)
+      .map(SObjectDescriptor.FieldDescriptor::new)
+      .collect(Collectors.toList());
+
+    return new SObjectDescriptor(name, fields);
+  }
+
+  private SObjectsDescribeResult getSObjectsDescribeResultFromSObjects(Collection<String> sObjects) {
+    Map<String, Map<String, Field>> objectFieldMap = new HashMap<>();
+
+    // split the given sObjects into smaller partitions to ensure we don't exceed the limitation
+    for (List<String> partition : Lists.partition(new ArrayList<>(sObjects), DESCRIBE_SOBJECTS_LIMIT)) {
+      DescribeSObjectResult[] results =
+        runSalesforceCommand(partnerConnection -> partnerConnection.describeSObjects(partition.toArray(new String[0])));
+      if (results != null) {
+        for (DescribeSObjectResult sObjectDescribe : results) {
+          // sObjects names are case-insensitive
+          // store them in lower case to ensure we obtain them case-insensitively
+          objectFieldMap.put(sObjectDescribe.getName().toLowerCase(), getSObjectFields(sObjectDescribe));
+        }
+      }
+    }
+
+    return new SObjectsDescribeResult(objectFieldMap);
+  }
+
+  private Map<String, Field> getSObjectFields(DescribeSObjectResult sObjectDescribe) {
+    return Arrays.stream(sObjectDescribe.getFields())
+      .collect(Collectors.toMap(
+        field -> field.getName().toLowerCase(),
+        Function.identity(),
+        (o, n) -> n,
+        LinkedHashMap::new)); // preserve field order for queries by sObject
+  }
+
+  private <T> T runSalesforceCommand(SalesforceCommand<T> command) {
+    while (!isStopped()) {
+      try {
+        return command.execute(connection);
+      } catch (ConnectionException e) {
+        setupConnection();
+      }
+    }
+    return null;
+  }
+
+  @FunctionalInterface
+  private interface SalesforceCommand<T> {
+    T execute(PartnerConnection connection) throws ConnectionException;
   }
 }
